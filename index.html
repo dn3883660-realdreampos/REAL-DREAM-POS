@@ -5859,7 +5859,8 @@ onAuthStateChanged(auth, async (user) => {
       setRole('owner');
       return;
     }
-    if (o.data().uid === user.uid) { setRole('owner'); return; }
+    const od = o.data();
+if (od.uid === user.uid || (Array.isArray(od.uids) && od.uids.includes(user.uid))) { setRole('owner'); return; }
     unsubSelf = onSnapshot(doc(db, 'clothpos_users', user.uid), (snap) => {
       const d = snap.exists() ? snap.data() : null;
       if (!d || d.removed || d.active === false) {
