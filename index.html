@@ -10824,5 +10824,192 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   };
 })();
 </script>
+<!-- ===== REAL DREAM: SIZE FINDER (scan -> total pieces + all sizes, voice) PATCH ===== -->
+<style id="rdf-css">
+#rdf-modal{position:fixed;inset:0;z-index:120;background:rgba(15,23,42,.6);display:none;align-items:flex-start;justify-content:center;padding:12px;overflow:auto}
+.rdf-box{background:#fff;border-radius:14px;max-width:560px;width:100%;margin-top:4vh;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);font-size:13px;color:#111827}
+.rdf-hd{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:1px solid #eee}
+.rdf-hd h3{font-size:17px;font-weight:700}
+.rdf-row{display:flex;gap:8px;margin-top:12px}
+.rdf-in{flex:1;min-width:0;padding:11px 12px;border:2px solid #e11d2e;border-radius:10px;font-size:15px;font-family:monospace}
+.rdf-in:focus{outline:none;box-shadow:0 0 0 3px rgba(225,29,46,.15)}
+.rdf-b{padding:10px 14px;border-radius:10px;border:1px solid #d4d4d8;background:#fff;font-weight:700;cursor:pointer;white-space:nowrap}
+.rdf-b.cam{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.rdf-ck{display:flex;align-items:center;gap:6px;margin-top:10px;font-weight:600;color:#374151}
+.rdf-res{margin-top:12px}
+.rdf-name{font-size:18px;font-weight:800}
+.rdf-sub{color:#6b7280;margin-top:2px}
+.rdf-tot{margin-top:10px;padding:10px 12px;border-radius:10px;background:#f4f4f5;display:flex;justify-content:space-between;font-weight:700;font-size:15px}
+.rdf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
+.rdf-sz{border:1px solid #e5e7eb;border-radius:10px;padding:10px;text-align:center}
+.rdf-sz b{display:block;font-size:20px}
+.rdf-sz span{font-weight:700}
+.rdf-sz.hit{border:2px solid #e11d2e;background:#fff5f5}
+.rdf-sz.ok span{color:#15803d}.rdf-sz.low span{color:#d97706}.rdf-sz.out{opacity:.6}.rdf-sz.out span{color:#dc2626}
+.rdf-list button{display:block;width:100%;text-align:left;padding:10px;border:1px solid #e5e7eb;border-radius:10px;margin-top:6px;background:#fff;cursor:pointer}
+.rdf-list button:hover{border-color:#e11d2e}
+.rdf-err{margin-top:12px;padding:12px;border-radius:10px;background:#fef2f2;color:#b91c1c;font-weight:700}
+</style>
+
+<script id="rdf-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const num = (v) => Number(v) || 0;
+  const E = (s) => esc(s);
+  const VK = 'rd_finder_voice';
+  let camFlag = false;
+
+  function build() {
+    if ($('rdf-modal')) return;
+    const m = document.createElement('div');
+    m.id = 'rdf-modal'; m.className = 'no-print';
+    m.innerHTML =
+      '<div class="rdf-box">' +
+        '<div class="rdf-hd"><h3>Find Size / Stock Check</h3><button type="button" class="rdf-b" id="rdf-close">Close</button></div>' +
+        '<div class="rdf-row"><input id="rdf-in" class="rdf-in" type="text" autocomplete="off" placeholder="Scan barcode, or type code / product name...">' +
+        '<button type="button" class="rdf-b cam" id="rdf-cam">Camera</button></div>' +
+        '<label class="rdf-ck"><input type="checkbox" id="rdf-voice"> Speak the result aloud</label>' +
+        '<div id="rdf-res" class="rdf-res"></div>' +
+      '</div>';
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', (e) => { if (e.target === m) close(); });
+    $('rdf-close').onclick = close;
+    $('rdf-cam').onclick = () => {
+      camFlag = true;
+      const cm = $('camera-scanner-modal'); if (cm) cm.style.zIndex = '140';
+      window.openCameraScannerModal();
+    };
+    const v = $('rdf-voice');
+    v.checked = localStorage.getItem(VK) === '1';
+    v.onchange = () => { localStorage.setItem(VK, v.checked ? '1' : '0'); if (!v.checked && window.speechSynthesis) speechSynthesis.cancel(); };
+    $('rdf-in').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const t = e.target.value.trim(); e.target.value = ''; if (t) find(t); }
+      if (e.key === 'Escape') close();
+    });
+  }
+
+  function open() {
+    build();
+    $('rdf-modal').style.display = 'flex';
+    setTimeout(() => $('rdf-in').focus(), 50);
+  }
+  function close() {
+    const m = $('rdf-modal'); if (m) m.style.display = 'none';
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    camFlag = false;
+  }
+  window.openSizeFinder = open;
+  const isOpen = () => { const m = $('rdf-modal'); return m && m.style.display === 'flex'; };
+
+  function status(n) { return n <= 0 ? 'out' : n < 3 ? 'low' : 'ok'; }
+
+  function speak(p, hitSize) {
+    if (!$('rdf-voice') || !$('rdf-voice').checked || !window.speechSynthesis) return;
+    const total = p.variants.reduce((a, v) => a + num(v.stock), 0);
+    let t = p.name + '. ';
+    if (hitSize != null) t += 'Scanned size ' + hitSize + '. ';
+    t += 'Total ' + total + ' pieces. ';
+    t += p.variants.map(v => 'Size ' + v.size + ', ' + (num(v.stock) > 0 ? num(v.stock) + ' pieces' : 'out of stock')).join('. ');
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t); u.lang = 'en-US'; u.rate = 0.95;
+    speechSynthesis.speak(u);
+  }
+
+  function showProduct(p, hitSize) {
+    const total = p.variants.reduce((a, v) => a + num(v.stock), 0);
+    $('rdf-res').innerHTML =
+      '<div class="rdf-name">' + E(p.name) + '</div>' +
+      '<div class="rdf-sub">' + E(p.category) + (p.color ? ' • ' + E(p.color) : '') + ' • Tk ' + num(p.sellPrice) + '</div>' +
+      '<div class="rdf-tot"><span>Total in stock</span><span>' + total + ' pcs</span></div>' +
+      '<div class="rdf-sub" style="margin-top:8px;font-weight:600">' + p.variants.length + ' size(s) available in this item:</div>' +
+      '<div class="rdf-grid">' + p.variants.map(v => {
+        const n = num(v.stock), hit = hitSize != null && String(v.size) === String(hitSize);
+        return '<div class="rdf-sz ' + status(n) + (hit ? ' hit' : '') + '"><b>' + E(v.size) + '</b><span>' + (n > 0 ? n + ' pcs' : 'Out of stock') + '</span>' +
+          (hit ? '<div style="font-size:10px;color:#e11d2e;font-weight:700;margin-top:2px">SCANNED</div>' : '') + '</div>';
+      }).join('') + '</div>';
+    speak(p, hitSize);
+  }
+
+  function find(raw) {
+    const q = String(raw).trim(), lower = q.toLowerCase(), compact = q.replace(/\s+/g, '');
+    if (typeof playScanBeep === 'function') playScanBeep(true);
+    // 1) exact barcode
+    for (const p of products) for (const v of p.variants) {
+      const sku = String(v.sku == null ? '' : v.sku);
+      if (sku && (sku.toLowerCase() === lower || sku.replace(/\s+/g, '') === compact)) { showProduct(p, v.size); return; }
+    }
+    // 2) product name / id
+    const list = products.filter(p => String(p.id).toLowerCase() === lower || String(p.name).toLowerCase().includes(lower));
+    if (list.length === 1) { showProduct(list[0], null); return; }
+    if (list.length > 1) {
+      $('rdf-res').innerHTML = '<div class="rdf-sub" style="font-weight:700">' + list.length + ' items found. Tap one:</div><div class="rdf-list">' +
+        list.map(p => '<button type="button" data-id="' + E(p.id) + '"><b>' + E(p.name) + '</b><div class="rdf-sub">' + p.variants.reduce((a, v) => a + num(v.stock), 0) + ' pcs • ' + p.variants.map(v => E(v.size)).join(', ') + '</div></button>').join('') + '</div>';
+      $('rdf-res').querySelectorAll('button').forEach(b => b.onclick = () => { const p = products.find(x => x.id === b.dataset.id); if (p) showProduct(p, null); });
+      return;
+    }
+    if (typeof playScanBeep === 'function') playScanBeep(false);
+    $('rdf-res').innerHTML = '<div class="rdf-err">No item found for "' + E(q) + '"</div>';
+    if ($('rdf-voice').checked && window.speechSynthesis) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance('Item not found')); }
+  }
+
+  // Camera result goes to the finder (not to the cart) when started from here
+  const prevScan = window.processScannedBarcode;
+  window.processScannedBarcode = function (code) {
+    if (camFlag && isOpen()) {
+      camFlag = false;
+      const cm = $('camera-scanner-modal'); if (cm) cm.style.zIndex = '';
+      find(code);
+      setTimeout(() => { const i = $('rdf-in'); if (i) i.focus(); }, 100);
+      return;
+    }
+    return prevScan.apply(this, arguments);
+  };
+  const prevClose = window.closeCameraScannerModal;
+  window.closeCameraScannerModal = function () {
+    const cm = $('camera-scanner-modal'); if (cm) cm.style.zIndex = '';
+    return prevClose.apply(this, arguments);
+  };
+
+  /* ---------- entry points ---------- */
+  function addButtons() {
+    // POS scan bar
+    const cam = document.querySelector('#view-pos button[onclick="openCameraScannerModal()"]');
+    if (cam && !$('rdf-pos-btn')) {
+      const b = document.createElement('button');
+      b.id = 'rdf-pos-btn'; b.type = 'button';
+      b.className = 'px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold';
+      b.textContent = 'Find Size';
+      b.onclick = open;
+      cam.insertAdjacentElement('afterend', b);
+    }
+    // Sidebar menu (red/dark menu)
+    const menu = $('pb-menu');
+    if (menu && !$('rdf-menu-btn')) {
+      const b = document.createElement('button');
+      b.id = 'rdf-menu-btn'; b.type = 'button'; b.className = 'pb-it';
+      b.setAttribute('data-t', 'openSizeFinder'); b.setAttribute('data-perm', 'pos');
+      b.innerHTML = '<i data-lucide="search"></i><span>Find Size</span>';
+      menu.insertBefore(b, menu.children[1] || null);
+      if (window.lucide) lucide.createIcons();
+    }
+    // Phone home tile
+    const tiles = $('m-tiles');
+    if (tiles && !$('rdf-tile')) {
+      const t = document.createElement('button');
+      t.id = 'rdf-tile'; t.type = 'button'; t.className = 'tile'; t.setAttribute('data-perm', 'pos');
+      t.innerHTML = '<span class="ti" style="background:#fee2e2;color:#e11d2e"><i data-lucide="search"></i></span><span class="tl">Find Size</span>';
+      t.addEventListener('click', (e) => { e.stopPropagation(); open(); });
+      tiles.appendChild(t);
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+
+  window.addEventListener('keydown', (e) => { if (e.key === 'F4') { e.preventDefault(); open(); } });
+
+  build(); addButtons();
+  setInterval(addButtons, 2000);
+})();
+</script>
 </body>
 </html>
