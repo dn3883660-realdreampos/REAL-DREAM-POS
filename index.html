@@ -11011,5 +11011,242 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   setInterval(addButtons, 2000);
 })();
 </script>
+<!-- ===== REAL DREAM: CLEAN PRINT MODULE (মেমো + প্রাইস ট্যাগ) =====
+     ফাইলের একদম শেষে, </body> এর ঠিক আগে paste করুন।
+     এটি আগের সব মেমো/ট্যাগ প্রিন্ট patch-এর কাজ একসাথে করে এবং সেগুলোকে override করে।
+     আগের কোনো patch মুছতে হবে না। -->
+<style id="rdp2-css">
+/* ---------- মেমো (স্ক্রিন প্রিভিউ + প্রিন্ট একই ডিজাইন) ---------- */
+.rdm{font-family:Arial,Helvetica,sans-serif;color:#000;font-size:12px;line-height:1.3;font-weight:600;box-sizing:border-box}
+.rdm *{box-sizing:border-box}
+.rdm.w58{font-size:10.5px}
+.rdm.big{font-size:13px;padding:6px 4px}
+.rdm h1{font-size:16px;font-weight:800;text-align:center;margin:0}
+.rdm.big h1{font-size:24px;text-align:left}
+.rdm .c{text-align:center}
+.rdm .sep{border-top:1px dashed #000;margin:5px 0}
+.rdm .r{display:flex;justify-content:space-between;gap:6px}
+.rdm .r.t{font-size:1.15em;font-weight:800;border-top:1px solid #000;padding-top:3px;margin-top:3px}
+.rdm table{width:100%;border-collapse:collapse}
+.rdm th{text-align:left;border-bottom:1px solid #000;padding:2px 0;font-weight:800}
+.rdm td{padding:2px 0;vertical-align:top}
+.rdm .n{text-align:right;white-space:nowrap;padding-left:4px}
+.rdm .sm{font-size:.85em;font-weight:600}
+.rdm .logo{display:block;margin:0 auto 4px;max-width:44mm;max-height:16mm;object-fit:contain;filter:grayscale(1) contrast(1.4)}
+.rdm.w58 .logo{max-width:30mm;max-height:12mm}
+.rdm.big .logo{margin:0 0 6px;max-height:20mm}
+.rdm .bc{display:block;margin:6px auto 0;shape-rendering:crispEdges}
+.rdm .sign{display:flex;justify-content:space-between;margin-top:34px}
+.rdm .sign div{border-top:1px solid #000;width:38%;text-align:center;padding-top:3px;font-size:.85em}
+.rdm .hide58{}
+.rdm.w58 .hide58{display:none}
+.rdm.big table{border:1px solid #999}
+.rdm.big th,.rdm.big td{border:1px solid #bbb;padding:5px}
+.rdm.big th{background:#f1f1f1}
+
+@media screen{
+  #print-area.paper-80mm,#print-area.paper-58mm{padding:8px 6px!important}
+  #print-area.paper-a4,#print-area.paper-a5{padding:14px!important}
+}
+
+/* ---------- প্রিন্ট ---------- */
+@media print{
+  html,body{height:auto!important;margin:0!important;padding:0!important;overflow:visible!important}
+  #isolated-print-mount.rdm-job{padding:0 2mm!important;margin:0!important}
+  #isolated-print-mount.rdm-job.paper-a4,#isolated-print-mount.rdm-job.paper-a5{padding:0!important}
+  #isolated-print-mount.rdm-job .rdm,#isolated-print-mount.rdm-job .rdm *{color:#000!important;font-weight:700!important;text-shadow:none!important}
+  #isolated-print-mount.rdm-job .rdm.big th,#isolated-print-mount.rdm-job .rdm.big td{border-color:#000!important}
+  #isolated-print-mount.rdm-job .rdm.big th{background:transparent!important}
+
+  /* প্রাইস ট্যাগ: প্রতিটি ট্যাগ ঠিক একটি পেজ */
+  #isolated-print-mount.tagjob{width:var(--tw)!important;margin:0!important;padding:0!important}
+  .rdt-sheet{display:block;box-sizing:border-box;margin:0;padding:0;overflow:hidden;width:var(--tw);height:var(--th);
+    break-inside:avoid;page-break-inside:avoid;break-after:page;page-break-after:always}
+  .rdt-sheet:last-child{break-after:auto;page-break-after:auto}
+  .rdt-sheet .rdt{margin:0 auto!important;break-after:auto!important;page-break-after:auto!important}
+}
+</style>
+
+<script id="rdp2-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const num = (v) => Number(v) || 0;
+  const E = (s) => esc(s);
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const toast = (m, t) => window.showToast && window.showToast(m, t || 'info');
+  const money = (n) => Math.round(num(n)).toLocaleString('en-US');
+  const BN = /[\u0980-\u09FF]/;
+
+  /* =========================================================
+     ১) মেমো টেমপ্লেট (৮০মিমি / ৫৮মিমি / A4 / A5 — একটাই কোড)
+  ========================================================= */
+  const enPay = (pm) => { const m = String(pm || '').match(/\(([^)]+)\)/); return m ? m[1] : String(pm || ''); };
+  const enName = (n) => /সাধারণ ক্রেতা|Walk-in/.test(String(n || '')) ? 'Walk-in Customer' : String(n || '');
+  const enPhone = (p) => /প্রযোজ্য নয়/.test(String(p || '')) ? 'N/A' : String(p || '');
+  const dt = (d) => new Date(d).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const POLICY = 'Exchange within 7 days with cash memo in unused condition. Cash is non-refundable.';
+  const policy = () => { const p = shopConfig.policy; return (!p || BN.test(p)) ? POLICY : p; };
+
+  function dueNow(s) {
+    const g = Math.max(0, num(s.grandTotal) - num(s.returnedValue));
+    const paid = s.paidAmount != null ? num(s.paidAmount) : num(s.grandTotal);
+    const pn = Math.min(Math.max(paid, 0), num(s.grandTotal));
+    const col = Math.min(Math.max(0, pn - num(s.returnedAmount)), g);
+    return Math.max(0, Math.round(g - col));
+  }
+
+  function extras(s) {
+    let h = '';
+    if (s.duePayments && s.duePayments.length) {
+      h += '<div class="sep"></div><div style="font-weight:800">Due payments received</div>' +
+        s.duePayments.map(p => '<div class="r sm"><span>' + E(dt(p.date)) + ' • ' + E(enPay(p.method)) + '</span><span>৳' + money(p.amount) + '</span></div>').join('');
+    }
+    if (s.returns && s.returns.length) {
+      h += '<div class="sep"></div><div style="font-weight:800">Return / Refund</div>' +
+        s.returns.map(r => '<div class="sm" style="margin-bottom:3px">' + E(r.id) + ' • ' + E(dt(r.date)) + '<br>' +
+          (r.items || []).map(i => E(i.name) + ' [' + E(i.size) + '] ×' + i.qty).join(', ') +
+          '<br>Value -৳' + money(r.value) + ' • Refund ৳' + money(r.refund) + (r.reason ? ' • ' + E(r.reason) : '') + '</div>').join('') +
+        '<div class="r" style="font-weight:800"><span>Net bill</span><span>৳' + money(num(s.grandTotal) - num(s.returnedValue)) + '</span></div>';
+    }
+    return h;
+  }
+
+  // বারকোড: প্রিন্টারের ডটের গুণিতকে (203dpi = 0.125mm) যাতে ঝাপসা না হয়
+  function drawBarcode(svg, value, maxMm, hMm) {
+    JsBarcode(svg, value, { format: 'CODE128', width: 2, height: 50, displayValue: true, fontSize: 14, textMargin: 2, margin: 0, font: 'Arial', fontOptions: 'bold' });
+    const W = parseFloat(svg.getAttribute('width')), H = parseFloat(svg.getAttribute('height'));
+    const mods = W / 2, dot = 0.125;
+    const dots = clamp(Math.floor(maxMm / (mods * dot)), 1, 3);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.removeAttribute('width'); svg.removeAttribute('height');
+    svg.style.width = (mods * dots * dot) + 'mm';
+    svg.style.height = hMm + 'mm';
+  }
+
+  window.renderReceiptTemplate = function () {
+    const s = currentViewingSale, area = $('print-area');
+    if (!s || !area) return;
+    const fmt = activePrinterFormat, is58 = fmt === '58mm', big = fmt === 'a4' || fmt === 'a5';
+    const paid = s.paidAmount != null ? s.paidAmount : s.grandTotal;
+    const due = dueNow(s);
+    const logo = shopConfig.logo ? '<img class="logo" src="' + shopConfig.logo + '" alt="logo">' : '';
+    const items = (s.items || []).map((i, n) =>
+      '<tr><td>' + (big ? (n + 1) + '. ' : '') + '<b>' + E(i.name) + '</b><div class="sm">Size: ' + E(i.size) + (i.color ? ' • ' + E(i.color) : '') + '</div></td>' +
+      '<td class="n">' + i.qty + '</td><td class="n hide58">৳' + money(i.price) + '</td><td class="n"><b>৳' + money(num(i.price) * num(i.qty)) + '</b></td></tr>').join('');
+
+    area.innerHTML =
+      '<div class="rdm ' + (is58 ? 'w58' : '') + (big ? ' big' : '') + '">' +
+        '<div class="' + (big ? '' : 'c') + '">' + logo +
+          '<h1>' + E(shopConfig.name) + '</h1>' +
+          (shopConfig.tagline && !is58 ? '<div class="sm">' + E(BN.test(shopConfig.tagline) ? '' : shopConfig.tagline) + '</div>' : '') +
+          '<div class="sm">' + E(BN.test(shopConfig.address || '') ? '' : (shopConfig.address || '')) + '</div>' +
+          '<div class="sm">Phone: ' + E(shopConfig.phone) + '</div>' +
+          (big ? '<div style="font-weight:800;margin-top:4px">CASH MEMO / INVOICE</div>' : '') +
+        '</div>' +
+        '<div class="sep"></div>' +
+        '<div class="r"><span>Memo No</span><b>' + E(s.id) + '</b></div>' +
+        '<div class="r"><span>Date</span><span>' + E(dt(s.date)) + '</span></div>' +
+        '<div class="r"><span>Customer</span><b>' + E(enName(s.customerName)) + '</b></div>' +
+        (is58 ? '' : '<div class="r"><span>Mobile</span><span>' + E(enPhone(s.customerPhone)) + '</span></div>') +
+        '<div class="r"><span>Payment</span><b>' + E(enPay(s.paymentMethod)) + '</b></div>' +
+        '<div class="sep"></div>' +
+        '<table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n hide58">Rate</th><th class="n">Total</th></tr></thead><tbody>' + items + '</tbody></table>' +
+        '<div class="sep"></div>' +
+        '<div class="r"><span>Subtotal</span><span>৳' + money(s.subtotal) + '</span></div>' +
+        (num(s.discount) > 0 ? '<div class="r"><span>Discount</span><span>- ৳' + money(s.discount) + '</span></div>' : '') +
+        (num(s.tax) > 0 ? '<div class="r"><span>VAT / Tax</span><span>+ ৳' + money(s.tax) + '</span></div>' : '') +
+        '<div class="r t"><span>Grand Total</span><span>৳' + money(s.grandTotal) + '</span></div>' +
+        '<div class="r"><span>Paid</span><span>৳' + money(paid) + '</span></div>' +
+        (num(s.changeAmount) > 0 ? '<div class="r"><span>Change</span><span>৳' + money(s.changeAmount) + '</span></div>' : '') +
+        (due > 0 ? '<div class="r" style="font-weight:800"><span>Due</span><span>৳' + money(due) + '</span></div>' : '') +
+        extras(s) +
+        '<div class="c"><svg id="memo-barcode-svg" class="bc"></svg>' +
+          '<div class="sm" style="margin-top:4px">' + E(policy()) + '</div>' +
+          '<div style="font-weight:800;margin-top:4px">Thank you! Please visit again.</div>' +
+          '<div class="sm" style="margin-top:3px">(Development By Boost Lab)</div></div>' +
+        (big ? '<div class="sign"><div>Customer signature</div><div>Authorized signature</div></div>' : '') +
+      '</div>';
+
+    try { drawBarcode(area.querySelector('#memo-barcode-svg'), s.id, is58 ? 40 : big ? 70 : 60, is58 ? 10 : 12); } catch (e) {}
+  };
+
+  /* =========================================================
+     ২) মেমো প্রিন্ট
+  ========================================================= */
+  let printing = false;
+  function runPrint(mount, cleanupExtra) {
+    if (printing) return;
+    printing = true;
+    const done = () => {
+      window.removeEventListener('afterprint', done);
+      clearTimeout(fallback);
+      mount.className = 'hidden';
+      mount.innerHTML = '';
+      mount.style.removeProperty('--tw');
+      mount.style.removeProperty('--th');
+      if (cleanupExtra) cleanupExtra();
+      if (typeof applyPrinterStyleRule === 'function') applyPrinterStyleRule(activePrinterFormat);
+      printing = false;
+    };
+    window.addEventListener('afterprint', done);
+    const fallback = setTimeout(done, 120000);          // কোনো কারণে afterprint না এলে নিজে পরিষ্কার হবে
+    requestAnimationFrame(() => setTimeout(() => window.print(), 100));
+  }
+
+  window.triggerInvoicePrint = function () {
+    const src = $('print-area'), mount = $('isolated-print-mount');
+    if (!src || !mount || !currentViewingSale || printing) return;
+    const fmt = activePrinterFormat, thermal = fmt === '80mm' || fmt === '58mm';
+    window.renderReceiptTemplate();
+    mount.className = 'rdm-job paper-' + fmt;
+    mount.innerHTML = thermal ? src.innerHTML.replace(/৳\s?/g, 'Tk ') : src.innerHTML;
+    const svg = mount.querySelector('#memo-barcode-svg');
+    if (svg) svg.id = 'mount-memo-barcode-svg';
+    applyPrinterStyleRule(fmt);
+    runPrint(mount);
+  };
+
+  /* =========================================================
+     ৩) প্রাইস ট্যাগ প্রিন্ট (৬৩টি দিলে ঠিক ৬৩ পেজ)
+        ট্যাগের ডিজাইন/স্লাইডার আগের মতোই থাকে (প্রিভিউ থেকে কপি করা হয়)
+  ========================================================= */
+  window.printGeneratedTags = function () {
+    if (printing) return;
+    try { window.updateTagPreview(); } catch (e) {}
+    const src = document.querySelector('#single-tag-preview .rdt');
+    if (!src) { toast('ট্যাগ প্রিভিউ পাওয়া যায়নি।', 'error'); return; }
+
+    const W = clamp(parseFloat($('tag-custom-width').value) || 50, 15, 120);
+    const H = clamp(parseFloat($('tag-custom-height').value) || 30, 10, 120);
+    const copies = clamp(parseInt($('tag-print-copies').value) || 1, 1, 100);
+
+    // পেজের চেয়ে সামান্য ছোট, যাতে রাউন্ডিংয়ে বাড়তি পেজ না হয়
+    const sheetH = (H - 1).toFixed(2) + 'mm', tagH = (H - 1.4).toFixed(2) + 'mm', tagW = (W - 1).toFixed(2) + 'mm';
+
+    $('dynamic-print-style').innerHTML = '@page{size:' + W + 'mm ' + H + 'mm;margin:0}';
+    const mount = $('isolated-print-mount');
+    mount.innerHTML = '';
+    mount.className = 'tagjob';
+    mount.style.setProperty('--tw', W + 'mm');
+    mount.style.setProperty('--th', sheetH);
+
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < copies; i++) {
+      const sheet = document.createElement('div');
+      sheet.className = 'rdt-sheet';
+      const t = src.cloneNode(true);
+      t.style.width = tagW; t.style.height = tagH; t.style.margin = '0 auto';
+      sheet.appendChild(t);
+      frag.appendChild(sheet);
+    }
+    mount.appendChild(frag);
+    runPrint(mount);
+  };
+
+  try { if (currentViewingSale) window.renderReceiptTemplate(); } catch (e) {}
+})();
+</script>
 </body>
 </html>
