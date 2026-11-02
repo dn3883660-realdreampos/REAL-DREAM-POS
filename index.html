@@ -11248,5 +11248,168 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   try { if (currentViewingSale) window.renderReceiptTemplate(); } catch (e) {}
 })();
 </script>
+<!-- ===== REAL DREAM: PRINT ALL SIZES PRICE TAG PATCH =====
+     ফাইলের একদম শেষে, </body> এর ঠিক আগে paste করুন (সবার শেষ patch এর পরে)।
+     কিছু মুছতে বা বদলাতে হবে না। -->
+<style id="rdall-css">
+#rdall-box{margin-top:10px;padding:12px;border:1px solid #fecaca;background:#fff5f5;border-radius:12px;font-size:12px;color:#111827}
+#rdall-box h4{font-weight:700;font-size:13px;margin-bottom:4px}
+#rdall-list{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+#rdall-list span{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:3px 8px;font-weight:700}
+#rdall-list span b{color:#e11d2e}
+#rdall-total{font-weight:800;margin-bottom:8px}
+.rdall-btn{width:100%;padding:10px 12px;border-radius:10px;background:#111827;color:#fff;font-weight:700;font-size:13px;border:0;cursor:pointer}
+.rdall-btn:hover{background:#000}
+.rdall-btn:disabled{opacity:.5;cursor:default}
+#rdall-top{padding:10px 16px;border-radius:12px;background:#111827;color:#fff;font-weight:700;font-size:13px;border:0;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+#rdall-top:hover{background:#000}
+</style>
+
+<script id="rdall-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const num = (v) => Number(v) || 0;
+  const E = (s) => esc(s);
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const toast = (m, t) => window.showToast && window.showToast(m, t || 'info');
+  let busy = false;
+
+  /* ---------- কোন পণ্য সিলেক্ট আছে + কোন সাইজে কত পিস স্টক ---------- */
+  function plan() {
+    const sel = $('tag-product-select');
+    const p = sel ? products.find(x => x.id === sel.value) : null;
+    if (!p) return { p: null, rows: [], total: 0, skipped: 0 };
+    const rows = [];
+    let skipped = 0;
+    p.variants.forEach(v => {
+      const q = Math.floor(num(v.stock));
+      if (q > 0) rows.push({ v, qty: q }); else skipped++;
+    });
+    return { p, rows, total: rows.reduce((a, r) => a + r.qty, 0), skipped };
+  }
+
+  /* ---------- UI: বাটন + সারাংশ ---------- */
+  function refreshInfo() {
+    const list = $('rdall-list'), tot = $('rdall-total'), btn = $('rdall-btn');
+    if (!list) return;
+    const pl = plan();
+    if (!pl.p) { list.innerHTML = ''; tot.textContent = ''; btn.disabled = true; return; }
+    list.innerHTML = pl.rows.length
+      ? pl.rows.map(r => '<span>' + E(r.v.size) + ' × <b>' + r.qty + '</b></span>').join('')
+      : '<span>No size has stock</span>';
+    tot.textContent = pl.rows.length
+      ? 'Total: ' + pl.total + ' tags (' + pl.rows.length + ' sizes)' + (pl.skipped ? ' • ' + pl.skipped + ' out-of-stock size skipped' : '')
+      : '';
+    btn.disabled = !pl.rows.length;
+  }
+
+  function build() {
+    if (!$('view-tags')) return;
+    // ১) বাম পাশের প্যানেলে সারাংশ বক্স
+    if (!$('rdall-box')) {
+      const copies = $('tag-print-copies');
+      const anchor = copies && (copies.closest('.pt-2') || copies.parentElement);
+      if (anchor) {
+        const box = document.createElement('div');
+        box.id = 'rdall-box';
+        box.innerHTML =
+          '<h4>Print All Sizes Price Tag</h4>' +
+          '<div style="color:#6b7280">One tag for every piece in stock, for all sizes of the selected item.</div>' +
+          '<div id="rdall-list"></div><div id="rdall-total"></div>' +
+          '<button type="button" id="rdall-btn" class="rdall-btn">Print All Sizes</button>';
+        anchor.insertAdjacentElement('afterend', box);
+        $('rdall-btn').onclick = () => window.printAllSizeTags();
+      }
+    }
+    // ২) উপরের হেডারে বাটন
+    const top = document.querySelector('#view-tags button[onclick="printGeneratedTags()"]');
+    if (top && !$('rdall-top')) {
+      const b = document.createElement('button');
+      b.id = 'rdall-top'; b.type = 'button';
+      b.textContent = 'Print All Sizes';
+      b.onclick = () => window.printAllSizeTags();
+      top.insertAdjacentElement('afterend', b);
+    }
+    refreshInfo();
+  }
+
+  /* ---------- প্রিন্ট ---------- */
+  window.printAllSizeTags = function () {
+    if (busy) return;
+    const pl = plan();
+    if (!pl.p) { toast('Select an item first.', 'warning'); return; }
+    if (!pl.rows.length) { toast('This item has no stock in any size.', 'warning'); return; }
+
+    const summary = pl.rows.map(r => r.v.size + ' × ' + r.qty).join(', ');
+    if (!confirm('Print ' + pl.total + ' price tags for "' + pl.p.name + '"?\n\n' + summary)) return;
+
+    const W = clamp(parseFloat($('tag-custom-width').value) || 50, 15, 120);
+    const H = clamp(parseFloat($('tag-custom-height').value) || 30, 10, 120);
+
+    // ফর্মের বর্তমান মান সেভ করে রাখি, পরে ফেরত দেব
+    const ids = ['tag-field-desc', 'tag-field-dept', 'tag-field-price', 'tag-field-sku'];
+    const saved = {};
+    ids.forEach(id => saved[id] = $(id).value);
+
+    const sheetH = (H - 1).toFixed(2) + 'mm';
+    const tagH = (H - 1.4).toFixed(2) + 'mm';
+    const tagW = (W - 1).toFixed(2) + 'mm';
+
+    const frag = document.createDocumentFragment();
+    let failed = false;
+    try {
+      pl.rows.forEach(r => {
+        // প্রতিটি সাইজের তথ্য বসিয়ে প্রিভিউ আপডেট -> একই ডিজাইনের ট্যাগ কপি
+        $('tag-field-desc').value = pl.p.name + ' (' + r.v.size + ')';
+        $('tag-field-dept').value = pl.p.category || '';
+        $('tag-field-price').value = pl.p.sellPrice;
+        $('tag-field-sku').value = r.v.sku;
+        window.updateTagPreview();
+        const src = document.querySelector('#single-tag-preview .rdt');
+        if (!src) { failed = true; return; }
+        for (let i = 0; i < r.qty; i++) {
+          const sheet = document.createElement('div');
+          sheet.className = 'rdt-sheet';
+          const t = src.cloneNode(true);
+          t.style.width = tagW; t.style.height = tagH; t.style.margin = '0 auto';
+          sheet.appendChild(t);
+          frag.appendChild(sheet);
+        }
+      });
+    } finally {
+      ids.forEach(id => $(id).value = saved[id]);
+      try { window.updateTagPreview(); } catch (e) {}
+    }
+    if (failed) { toast('Tag preview not found.', 'error'); return; }
+
+    $('dynamic-print-style').innerHTML = '@page{size:' + W + 'mm ' + H + 'mm;margin:0}';
+    const mount = $('isolated-print-mount');
+    mount.innerHTML = '';
+    mount.className = 'tagjob';
+    mount.style.setProperty('--tw', W + 'mm');
+    mount.style.setProperty('--th', sheetH);
+    mount.appendChild(frag);
+
+    busy = true;
+    const done = () => {
+      window.removeEventListener('afterprint', done);
+      clearTimeout(fallback);
+      mount.className = 'hidden';
+      mount.innerHTML = '';
+      mount.style.removeProperty('--tw');
+      mount.style.removeProperty('--th');
+      if (typeof applyPrinterStyleRule === 'function') applyPrinterStyleRule(activePrinterFormat);
+      busy = false;
+    };
+    window.addEventListener('afterprint', done);
+    const fallback = setTimeout(done, 180000);
+    requestAnimationFrame(() => setTimeout(() => window.print(), 150));
+  };
+
+  build();
+  setInterval(build, 1000); // পণ্য/সাইজ/স্টক বদলালে সারাংশ নিজে থেকে আপডেট হবে
+})();
+</script>
 </body>
 </html>
