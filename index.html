@@ -10740,5 +10740,50 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   try { window.updateTagPreview(); } catch (e) {}
 })();
 </script>
+<!-- ===== REAL DREAM: REMOVE TAG BORDER PATCH ===== -->
+<style id="rdn-css">
+  /* Preview + print: tag er border o corner round bad */
+  .rdt {
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  @media screen {
+    #single-tag-preview .rdt {
+      box-shadow: 0 8px 24px rgba(0,0,0,.22) !important; /* preview e tag ta alada dekhate halka shadow */
+    }
+  }
+</style>
+
+<script id="rdn-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const LS = 'rd_tag_adj_v1';
+
+  // Border thickness ke 0 kore save kore dei, jate slider o 0 dekhay
+  try {
+    const a = JSON.parse(localStorage.getItem(LS) || '{}');
+    a.bdr = 0;
+    a.rad = 0;
+    localStorage.setItem(LS, JSON.stringify(a));
+  } catch (e) {}
+
+  // Slider/number input gulo 0 te set
+  function zero() {
+    ['bdr', 'rad'].forEach(k => {
+      const r = document.querySelector('[data-r="' + k + '"]');
+      const n = document.querySelector('[data-n="' + k + '"]');
+      if (r) r.value = 0;
+      if (n) n.value = 0;
+    });
+  }
+  zero();
+  setTimeout(zero, 1500);
+
+  // Tag preview refresh
+  try { window.updateTagPreview && window.updateTagPreview(); } catch (e) {}
+})();
+</script>
 </body>
 </html>
