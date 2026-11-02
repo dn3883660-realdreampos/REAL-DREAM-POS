@@ -10785,5 +10785,44 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   try { window.updateTagPreview && window.updateTagPreview(); } catch (e) {}
 })();
 </script>
+<!-- ===== REAL DREAM: SALES REPORT - MEMO LIST FIRST, SUMMARY BELOW PATCH ===== -->
+<script id="rdo-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+
+  function reorder() {
+    const view = $('view-reports');
+    const summaryTbody = $('custom-two-col-tbody');
+    const memoTbody = $('sales-tbody');
+    if (!view || !summaryTbody || !memoTbody) return false;
+
+    // Summary card = table er sabcheye kachher "bg-white rounded-2xl" block
+    const summaryCard = summaryTbody.closest('.bg-white.rounded-2xl');
+    const memoCard = memoTbody.closest('.bg-white.rounded-2xl');
+    if (!summaryCard || !memoCard) return false;
+    if (summaryCard.parentElement !== view || memoCard.parentElement !== view) return false;
+
+    // Memo list card already summary er age thakle kichu korar nei
+    const pos = summaryCard.compareDocumentPosition(memoCard);
+    const memoIsBefore = !!(pos & Node.DOCUMENT_POSITION_PRECEDING);
+    if (memoIsBefore) return true;
+
+    // Summary card ke memo card er pore boshai
+    memoCard.insertAdjacentElement('afterend', summaryCard);
+    return true;
+  }
+
+  reorder();
+  // Onno patch page re-render korle abar thik rakhe
+  setInterval(reorder, 1500);
+  const prevSwitch = window.switchTab;
+  window.switchTab = function (t) {
+    const r = prevSwitch.apply(this, arguments);
+    if (t === 'reports') setTimeout(reorder, 0);
+    return r;
+  };
+})();
+</script>
 </body>
 </html>
