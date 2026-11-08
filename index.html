@@ -11411,5 +11411,335 @@ Firestore ডাটাবেস অনলাইন=Cloud online
   setInterval(build, 1000); // পণ্য/সাইজ/স্টক বদলালে সারাংশ নিজে থেকে আপডেট হবে
 })();
 </script>
+<!-- ===== REAL DREAM: BULK PRODUCT UPLOAD (EXCEL / CSV) PATCH ===== -->
+<style id="rdbk-css">
+#rdbk-modal{position:fixed;inset:0;z-index:125;background:rgba(15,23,42,.6);display:none;align-items:flex-start;justify-content:center;padding:12px;overflow:auto}
+.rdbk-box{background:#fff;border-radius:14px;max-width:760px;width:100%;margin-top:3vh;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);font-size:13px;color:#111827}
+.rdbk-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid #eee}
+.rdbk-hd h3{font-size:17px;font-weight:700}
+.rdbk-b{padding:9px 14px;border-radius:10px;border:1px solid #d4d4d8;background:#fff;font-weight:700;font-size:13px;cursor:pointer}
+.rdbk-b:hover{background:#f9fafb}
+.rdbk-b.p{background:#e11d2e;border-color:#e11d2e;color:#fff}.rdbk-b.p:hover{background:#bf1625}
+.rdbk-b:disabled{opacity:.45;cursor:default}
+.rdbk-note{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.6;color:#374151}
+.rdbk-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.rdbk-gr{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:12px}
+.rdbk-k{border:1px solid #ececef;border-radius:10px;padding:10px;text-align:center}
+.rdbk-k b{display:block;font-size:20px}
+.rdbk-err{margin-top:10px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:10px;padding:8px 10px;max-height:130px;overflow:auto;font-size:12px}
+.rdbk-tw{margin-top:10px;max-height:260px;overflow:auto;border:1px solid #eee;border-radius:10px}
+.rdbk-t{width:100%;border-collapse:collapse;font-size:12px}
+.rdbk-t th{background:#fafafa;text-align:left;padding:7px 8px;position:sticky;top:0}
+.rdbk-t td{padding:6px 8px;border-top:1px solid #f1f1f3;vertical-align:top}
+.rdbk-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700}
+.rdbk-tag.n{background:#dcfce7;color:#15803d}.rdbk-tag.u{background:#dbeafe;color:#1d4ed8}
+.rdbk-rad{display:flex;gap:14px;flex-wrap:wrap;font-weight:600}
+.rdbk-rad label{display:flex;align-items:center;gap:6px;cursor:pointer}
+</style>
+
+<script id="rdbk-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const E = (s) => esc(s);
+  const toast = (m, t) => window.showToast && window.showToast(m, t || 'info');
+  const num = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; };
+  const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  const canEdit = () => typeof window.can !== 'function' || window.can('inventory_edit');
+
+  let groups = [], errors = [], fileName = '';
+
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve();
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = XLSX_URL; s.onload = res; s.onerror = () => rej(new Error('XLSX load failed'));
+      document.head.appendChild(s);
+    });
+  }
+
+  /* ---------- column names (flexible) ---------- */
+  const ALIAS = {
+    name: ['productname', 'name', 'product', 'item', 'itemname', 'garment', 'garmentname'],
+    category: ['category', 'department'],
+    color: ['color', 'colour', 'fabric', 'colorfabric'],
+    buy: ['buyprice', 'purchaseprice', 'buyingprice', 'cost', 'buy', 'purchase'],
+    sell: ['sellprice', 'saleprice', 'sellingprice', 'price', 'mrp', 'sell', 'sale'],
+    size: ['size', 'sizes'],
+    stock: ['stock', 'qty', 'quantity', 'pieces', 'pcs'],
+    sku: ['barcode', 'sku', 'code', 'barcodesku'],
+    brand: ['brand'], hsn: ['hsn', 'hsncode'], rack: ['rack'], shelf: ['shelf']
+  };
+  const norm = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+  function colMap(keys) {
+    const m = {};
+    Object.keys(ALIAS).forEach(f => { m[f] = keys.find(k => ALIAS[f].includes(norm(k))) || null; });
+    return m;
+  }
+
+  /* ---------- parse sheet rows into products (same name = same garment) ---------- */
+  function parse(json) {
+    groups = []; errors = [];
+    if (!json.length) { errors.push('The file is empty.'); return; }
+    const m = colMap(Object.keys(json[0]));
+    if (!m.name || !m.size) { errors.push('Required columns not found. Need at least: "Product Name" and "Size". Download the template to see the format.'); return; }
+    const map = new Map();
+    json.forEach((r, i) => {
+      const row = i + 2;
+      if (Object.values(r).every(v => String(v).trim() === '')) return;
+      const get = (f) => (m[f] ? String(r[m[f]] == null ? '' : r[m[f]]).trim() : '');
+      const name = get('name'), size = get('size').toUpperCase();
+      if (!name) { errors.push('Row ' + row + ': product name is missing'); return; }
+      if (!size) { errors.push('Row ' + row + ': size is missing (' + name + ')'); return; }
+      const key = name.toLowerCase();
+      let g = map.get(key);
+      if (!g) { g = { key, name, category: '', color: '', buy: 0, sell: 0, brand: '', hsn: '', rack: '', shelf: '', variants: [] }; map.set(key, g); }
+      if (!g.category) g.category = get('category');
+      if (!g.color) g.color = get('color');
+      if (!g.brand) g.brand = get('brand');
+      if (!g.hsn) g.hsn = get('hsn');
+      if (!g.rack) g.rack = get('rack');
+      if (!g.shelf) g.shelf = get('shelf');
+      if (!g.buy) g.buy = Math.max(0, num(get('buy')));
+      if (!g.sell) g.sell = Math.max(0, num(get('sell')));
+      const stock = Math.max(0, Math.floor(num(get('stock'))));
+      const sku = get('sku');
+      const dup = g.variants.find(v => v.size === size);
+      if (dup) { dup.stock += stock; errors.push('Row ' + row + ': size ' + size + ' repeated for "' + name + '" — stock added together'); }
+      else g.variants.push({ size, stock, sku });
+    });
+    groups = Array.from(map.values());
+    // new products must have a sell price
+    groups = groups.filter(g => {
+      const ex = findProduct(g.key);
+      if (!ex && !g.sell) { errors.push('"' + g.name + '": sell price is missing — skipped'); return false; }
+      return true;
+    });
+  }
+  const findProduct = (key) => products.find(p => String(p.name).trim().toLowerCase() === key);
+
+  /* ---------- modal ---------- */
+  function build() {
+    if ($('rdbk-modal')) return;
+    const m = document.createElement('div');
+    m.id = 'rdbk-modal'; m.className = 'no-print';
+    m.innerHTML =
+      '<div class="rdbk-box">' +
+        '<div class="rdbk-hd"><h3>Bulk Product Upload</h3><button type="button" class="rdbk-b" id="rdbk-close">Close</button></div>' +
+        '<div class="rdbk-note"><b>How it works:</b> one row = one size. Rows with the same <b>Product Name</b> become one garment with many sizes.<br>' +
+          'Columns: <b>Product Name, Category, Color, Buy Price, Sell Price, Size, Stock</b>, optional: Barcode, Brand, HSN, Rack, Shelf.<br>' +
+          'Barcode blank thakle automatic 6-digit barcode hobe (100001, 100002...).</div>' +
+        '<div class="rdbk-row">' +
+          '<button type="button" class="rdbk-b" id="rdbk-tpl">Download Excel template</button>' +
+          '<button type="button" class="rdbk-b p" id="rdbk-pick">Choose Excel / CSV file</button>' +
+          '<span id="rdbk-fn" style="color:#6b7280"></span>' +
+          '<input type="file" id="rdbk-file" accept=".xlsx,.xls,.csv" style="display:none">' +
+        '</div>' +
+        '<div class="rdbk-row"><span style="font-weight:700">If the garment + size already exists:</span>' +
+          '<div class="rdbk-rad"><label><input type="radio" name="rdbk-mode" value="add" checked> Add to current stock</label>' +
+          '<label><input type="radio" name="rdbk-mode" value="replace"> Replace stock with file value</label></div></div>' +
+        '<div id="rdbk-prev"></div>' +
+        '<div class="rdbk-row" style="justify-content:flex-end"><button type="button" class="rdbk-b" id="rdbk-cancel">Cancel</button>' +
+          '<button type="button" class="rdbk-b p" id="rdbk-go" disabled>Import products</button></div>' +
+      '</div>';
+    document.body.appendChild(m);
+    m.addEventListener('mousedown', (e) => { if (e.target === m) close(); });
+    $('rdbk-close').onclick = close; $('rdbk-cancel').onclick = close;
+    $('rdbk-tpl').onclick = template;
+    $('rdbk-pick').onclick = () => $('rdbk-file').click();
+    $('rdbk-file').onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) readFile(f); };
+    $('rdbk-go').onclick = doImport;
+  }
+  function open() {
+    if (!canEdit()) { toast('You do not have permission to add products.', 'warning'); return; }
+    build(); groups = []; errors = []; fileName = '';
+    $('rdbk-prev').innerHTML = ''; $('rdbk-fn').textContent = ''; $('rdbk-go').disabled = true;
+    $('rdbk-modal').style.display = 'flex';
+  }
+  function close() { const m = $('rdbk-modal'); if (m) m.style.display = 'none'; }
+  window.openBulkUpload = open;
+
+  /* ---------- template ---------- */
+  async function template() {
+    try {
+      await loadXlsx();
+      const rows = [
+        { 'Product Name': 'Premium Semi-Long Panjabi', 'Category': 'Panjabi', 'Color': 'White', 'Buy Price': 850, 'Sell Price': 1450, 'Size': '38', 'Stock': 8, 'Barcode': '', 'Brand': '', 'HSN': '', 'Rack': '', 'Shelf': '' },
+        { 'Product Name': 'Premium Semi-Long Panjabi', 'Category': 'Panjabi', 'Color': 'White', 'Buy Price': 850, 'Sell Price': 1450, 'Size': '40', 'Stock': 12, 'Barcode': '', 'Brand': '', 'HSN': '', 'Rack': '', 'Shelf': '' },
+        { 'Product Name': 'Casual Cotton Shirt', 'Category': 'Shirt', 'Color': 'Sky Blue', 'Buy Price': 550, 'Sell Price': 950, 'Size': 'M', 'Stock': 15, 'Barcode': '', 'Brand': '', 'HSN': '', 'Rack': '', 'Shelf': '' },
+        { 'Product Name': 'Casual Cotton Shirt', 'Category': 'Shirt', 'Color': 'Sky Blue', 'Buy Price': 550, 'Sell Price': 950, 'Size': 'L', 'Stock': 20, 'Barcode': '', 'Brand': '', 'HSN': '', 'Rack': '', 'Shelf': '' }
+      ];
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [28, 14, 14, 10, 10, 8, 8, 14, 12, 10, 8, 8].map(w => ({ wch: w }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Products');
+      XLSX.writeFile(wb, 'product_upload_template.xlsx');
+    } catch (e) { toast('Could not load Excel library. Check your internet.', 'error'); }
+  }
+
+  /* ---------- read file ---------- */
+  async function readFile(file) {
+    try {
+      $('rdbk-fn').textContent = 'Reading ' + file.name + '...';
+      await loadXlsx();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+      fileName = file.name;
+      $('rdbk-fn').textContent = file.name;
+      parse(json);
+      preview();
+    } catch (e) {
+      console.error(e);
+      $('rdbk-fn').textContent = '';
+      toast('Could not read this file. Use .xlsx, .xls or .csv', 'error');
+    }
+  }
+
+  /* ---------- preview ---------- */
+  function preview() {
+    let np = 0, up = 0, nv = 0, uv = 0, pcs = 0;
+    groups.forEach(g => {
+      const ex = findProduct(g.key);
+      if (ex) up++; else np++;
+      g.variants.forEach(v => {
+        pcs += v.stock;
+        const hit = ex && ex.variants.find(x => String(x.size).toUpperCase() === v.size);
+        if (hit) uv++; else nv++;
+      });
+    });
+    const rows = groups.slice(0, 200).map(g => {
+      const ex = findProduct(g.key);
+      return '<tr><td>' + E(g.name) + '</td><td>' + E(g.category || (ex ? ex.category : 'Others')) + '</td><td>' + (g.sell || (ex ? ex.sellPrice : 0)) + '</td><td>' +
+        g.variants.map(v => E(v.size) + ' × ' + v.stock).join(', ') + '</td><td><span class="rdbk-tag ' + (ex ? 'u' : 'n') + '">' + (ex ? 'Update' : 'New') + '</span></td></tr>';
+    }).join('');
+    $('rdbk-prev').innerHTML =
+      '<div class="rdbk-gr">' +
+        '<div class="rdbk-k"><b>' + np + '</b>New garments</div><div class="rdbk-k"><b>' + up + '</b>Existing (update)</div>' +
+        '<div class="rdbk-k"><b>' + nv + '</b>New sizes</div><div class="rdbk-k"><b>' + uv + '</b>Sizes updated</div><div class="rdbk-k"><b>' + pcs + '</b>Total pieces</div></div>' +
+      (errors.length ? '<div class="rdbk-err"><b>' + errors.length + ' warning(s):</b><br>' + errors.slice(0, 30).map(E).join('<br>') + (errors.length > 30 ? '<br>...' : '') + '</div>' : '') +
+      (groups.length ? '<div class="rdbk-tw"><table class="rdbk-t"><thead><tr><th>Garment</th><th>Category</th><th>Sell</th><th>Sizes × Stock</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '');
+    $('rdbk-go').disabled = !groups.length;
+  }
+
+  /* ---------- import ---------- */
+  function doImport() {
+    if (!canEdit()) { toast('You do not have permission.', 'warning'); return; }
+    if (!groups.length) return;
+    const mode = (document.querySelector('input[name="rdbk-mode"]:checked') || {}).value || 'add';
+    const used = new Set(); let seq = 100000;
+    products.forEach(p => p.variants.forEach(v => { const s = String(v.sku); used.add(s); if (/^\d{6}$/.test(s)) seq = Math.max(seq, +s); }));
+    const nextSku = () => { let s; do { seq++; s = String(seq); } while (used.has(s)); used.add(s); return s; };
+
+    const changed = new Set(); let np = 0, up = 0, vars = 0, n = 0;
+    const stamp = Date.now();
+    groups.forEach(g => {
+      let p = findProduct(g.key), isNew = false;
+      if (!p) {
+        isNew = true;
+        p = { id: 'p_' + stamp + '_' + (n++), name: g.name, category: g.category || 'Others', color: g.color || '', buyPrice: g.buy, sellPrice: g.sell, variants: [] };
+        products.unshift(p);
+      } else {
+        if (g.category) p.category = g.category;
+        if (g.color) p.color = g.color;
+        if (g.buy) p.buyPrice = g.buy;
+        if (g.sell) p.sellPrice = g.sell;
+      }
+      if (g.brand) p.brand = g.brand;
+      if (g.hsn) p.hsn = g.hsn;
+      if (g.rack) p.rack = g.rack;
+      if (g.shelf) p.shelf = g.shelf;
+      g.variants.forEach(v => {
+        const ex = p.variants.find(x => String(x.size).toUpperCase() === v.size);
+        if (ex) ex.stock = mode === 'replace' ? v.stock : (Number(ex.stock) || 0) + v.stock;
+        else {
+          let sku = v.sku;
+          if (!sku || used.has(sku)) sku = nextSku(); else used.add(sku);
+          p.variants.push({ size: v.size, sku, stock: v.stock });
+        }
+        vars++;
+      });
+      changed.add(p);
+      if (isNew) np++; else up++;
+    });
+
+    saveProducts();
+    changed.forEach(p => { if (window.cloudSaveProduct) window.cloudSaveProduct(p); });
+    close();
+    toast('✅ Imported: ' + np + ' new, ' + up + ' updated (' + vars + ' sizes)', 'success');
+    groups = []; errors = [];
+  }
+
+  /* ---------- buttons ---------- */
+  function addButtons() {
+    const mk = (id, cls) => { const b = document.createElement('button'); b.id = id; b.type = 'button'; b.className = cls; b.textContent = 'Bulk Upload (Excel)'; b.onclick = open; return b; };
+    const invAdd = document.querySelector('#view-inventory button[onclick="openAddProductModal()"]');
+    if (invAdd && !$('rdbk-inv-btn'))
+      invAdd.insertAdjacentElement('afterend', mk('rdbk-inv-btn', 'px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-semibold'));
+    const plAdd = $('pl-add');
+    if (plAdd && !$('rdbk-pl-btn')) {
+      const b = mk('rdbk-pl-btn', 'pb-red'); b.style.background = '#15803d'; b.style.marginRight = '8px';
+      plAdd.insertAdjacentElement('beforebegin', b);
+    }
+    const kid = document.querySelector('#pb-menu .pb-kid[data-t="openAddProductModal"]');
+    if (kid && !$('rdbk-menu-btn')) {
+      const b = document.createElement('button');
+      b.id = 'rdbk-menu-btn'; b.type = 'button'; b.className = 'pb-kid';
+      b.setAttribute('data-t', 'openBulkUpload'); b.setAttribute('data-perm', 'inventory_edit');
+      b.textContent = 'Bulk Product Upload';
+      kid.insertAdjacentElement('afterend', b);
+    }
+    const tiles = $('m-tiles');
+    if (tiles && !$('rdbk-tile')) {
+      const t = document.createElement('button');
+      t.id = 'rdbk-tile'; t.type = 'button'; t.className = 'tile'; t.setAttribute('data-perm', 'inventory_edit');
+      t.innerHTML = '<span class="ti" style="background:#dcfce7;color:#15803d"><i data-lucide="file-spreadsheet"></i></span><span class="tl">Bulk Upload</span>';
+      t.addEventListener('click', (e) => { e.stopPropagation(); open(); });
+      tiles.appendChild(t);
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+  build(); addButtons();
+  setInterval(addButtons, 2000);
+})();
+</script>
+<!-- ===== REAL DREAM: MOVE BULK UPLOAD BUTTON NEXT TO ADD PRODUCT ===== -->
+<style id="rdmv-css">
+@media screen{
+  #view-plist .pb-head{ flex-wrap:nowrap; }
+  #rdmv-wrap{ display:flex; align-items:center; gap:10px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
+  #rdmv-wrap #rdbk-pl-btn{ margin:0 !important; }
+}
+@media (max-width:767px){
+  #view-plist .pb-head{ flex-wrap:wrap; }
+  #rdmv-wrap{ width:100%; justify-content:flex-start; margin-left:0; }
+}
+</style>
+
+<script id="rdmv-js">
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+
+  function move() {
+    const add = $('pl-add'), bulk = $('rdbk-pl-btn');
+    if (!add || !bulk) return;
+
+    let wrap = $('rdmv-wrap');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'rdmv-wrap';
+      add.parentElement.insertBefore(wrap, add);
+    }
+    // Order: Bulk Upload (left)  ->  + Add new Product (right)
+    if (bulk.parentElement !== wrap) wrap.appendChild(bulk);
+    if (add.parentElement !== wrap) wrap.appendChild(add);
+  }
+
+  move();
+  setInterval(move, 800);   // bulk button abar add hole abar thik jaygay boshiye dey
+})();
+</script>
 </body>
 </html>
